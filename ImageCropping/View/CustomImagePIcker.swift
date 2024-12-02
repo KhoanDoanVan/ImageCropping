@@ -22,6 +22,11 @@ extension View {
         self
             .frame(width: size.width, height: size.height)
     }
+    
+    /// Haptic Feedback
+    func haptics(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        UIImpactFeedbackGenerator(style: style)
+    }
 }
 
 
@@ -80,7 +85,9 @@ fileprivate struct CustomImagePicker<Content: View>: View {
                 selectedImage = nil
             } content: {
                 CropView(crop: selectedCropType, image: selectedImage) { croppedImage, status in
-                    
+                    if let croppedImage {
+                        self.croppedImage = croppedImage
+                    }
                 }
             }
     }
@@ -115,7 +122,16 @@ struct CropView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
-                            
+                            /// Convert View to Image
+                            let renderer = ImageRenderer(content: ImageView(true))
+                            renderer.proposedSize = .init(width: 300, height: 300)
+                            renderer.scale = 10.0
+                            if let image = renderer.uiImage {
+                                onCrop(image, true)
+                            } else {
+                                onCrop(nil, false)
+                            }
+                            dismiss()
                         } label: {
                             Image(systemName: "checkmark")
                                 .font(.callout)
@@ -137,7 +153,7 @@ struct CropView: View {
     }
     
     @ViewBuilder
-    func ImageView() -> some View {
+    func ImageView(_ hideGrids: Bool = false) -> some View {
         let cropSize = crop.size()
         GeometryReader {
             let size = $0.size
@@ -145,15 +161,43 @@ struct CropView: View {
             if let image {
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .aspectRatio(contentMode: .fit)
                     .frame(size)
-                    /// Don't usage onEnded() because not working in this situation
-                    .onChange(of: isInteracting) { oldValue, newValue in
-                        /// - True: Dragging
-                        /// - False: Stopped Dragging
-                        if !newValue {
-                            /// - Storing Last Offset
-                            lastStoredOffset = offset
+                    .overlay {
+                        GeometryReader { proxy in
+                            let rect = proxy.frame(in: .named("CROPVIEW"))
+                            
+                            Color.clear
+                                /// Don't usage onEnded() because not working in this situation
+                                .onChange(of: isInteracting) { oldValue, newValue in
+                                    
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        if rect.minX > 0 {
+                                            offset.width = (offset.width - rect.minX)
+                                            haptics(.medium)
+                                        }
+                                        if rect.minY > 0 {
+                                            offset.height = (offset.height - rect.minY)
+                                            haptics(.medium)
+                                        }
+                                        if rect.maxX < size.width {
+                                            offset.width = (rect.minX - offset.width)
+                                            haptics(.medium)
+                                        }
+                                        if rect.maxY < size.height {
+                                            offset.height = (rect.minY - offset.height)
+                                            haptics(.medium)
+                                        }
+                                    }
+                                    
+                                    
+                                    /// - True: Dragging
+                                    /// - False: Stopped Dragging
+                                    if !newValue {
+                                        /// - Storing Last Offset
+                                        lastStoredOffset = offset
+                                    }
+                                }
                         }
                     }
             }
@@ -161,8 +205,11 @@ struct CropView: View {
         .scaleEffect(scale)
         .offset(offset)
         .overlay(content: {
-            Grids()
+            if !hideGrids {
+                Grids()
+            }
         })
+        .coordinateSpace(.named("CROPVIEW"))
         .gesture(
             DragGesture()
                 .updating($isInteracting, body: { _, out, _ in
@@ -179,24 +226,32 @@ struct CropView: View {
         )
         .gesture(
             MagnificationGesture()
-                .updating($isInteracting, body: { _, out, _ in
+                .updating($isInteracting, body: { value, out, _ in
                     out = true
+                    if scale < 1 {
+                        scale = 1
+                        lastScale = 0
+                    } else {
+                        lastScale = scale - 1
+                    }
                 })
                 .onChanged({ value in
                     let updatedScale = value + lastScale
                     /// - Limiting Beyond 1
                     scale = (updatedScale < 1 ? 1 : updatedScale)
                 })
-                .onEnded({ value in
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        if scale < 1 {
-                            scale = 1
-                            lastScale = 0
-                        } else {
-                            lastScale = scale - 1
-                        }
-                    }
-                })
+//                .onEnded({ value in
+//                    withAnimation(.easeInOut(duration: 0.2)) {
+//                        if scale < 1 {
+//                            scale = 1
+//                            l astScale = 0
+//                            print("LastScale: \(lastScale)")
+//                        } else {
+//                            lastScale = scale - 1
+//                            print("LastScale: \(lastScale)")
+//                        }
+//                    }
+//                })
         )
         .frame(cropSize)
         .cornerRadius(crop == .circle ? cropSize.height / 2 : 0)
